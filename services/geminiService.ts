@@ -1,21 +1,27 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { UILead, LeadStage, Insight } from "../types";
-import { supabase } from "./supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 
-/**
- * Vite: variáveis de ambiente DEVEM começar com VITE_
- * process.env NÃO existe no browser
- */
-const apiKey = import.meta.env.VITE_GOOGLE_API_KEY as string;
+// Variáveis de ambiente do Render (Node)
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-if (!apiKey) {
-  throw new Error("VITE_GOOGLE_API_KEY não configurada no ambiente");
+if (!GEMINI_API_KEY) {
+  throw new Error("GEMINI_API_KEY não configurada no Render");
 }
 
-const ai = new GoogleGenAI({ apiKey });
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error("Supabase envs não configuradas");
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const ai = new GoogleGenAI({
+  apiKey: GEMINI_API_KEY
+});
 
 /**
- * Busca o prompt de sistema configurado pelo usuário na aba AiCustomization.
+ * Busca prompt do sistema
  */
 export const getSystemPrompt = async (): Promise<string> => {
   try {
@@ -35,31 +41,54 @@ export const getSystemPrompt = async (): Promise<string> => {
   }
 };
 
-export const generateLeadInsights = async (
-  leads: UILead[]
-): Promise<Insight[]> => {
-  if (!apiKey || leads.length === 0) return [];
+/**
+ * Gera insights clínicos
+ */
+export const generateLeadInsights = async (leads: any[]) => {
+  if (!leads.length) return [];
 
   const systemPrompt = await getSystemPrompt();
 
-  const summary = {
-    totalPacientes: leads.length,
-    confirmados: leads.filter(l => l.stage === LeadStage.CONFIRMADO).length,
-    emAgendamento: leads.filter(l => l.stage === LeadStage.COMPARECIMENTO).length,
-    desistencias: leads.filter(l => l.isRefused).length,
-    examesTop: leads.reduce((acc: Record<string, number>, l) => {
-      const exam = l.interestExam || "Não Informado";
-      acc[exam] = (acc[exam] || 0) + 1;
-      return acc;
-    }, {})
-  };
-
   const userPrompt = `
 Analise os dados reais de atendimento e triagem abaixo para gerar insights estratégicos.
+Retorne exatamente 3 insights em formato JSON.
+Dados: ${JSON.stringify(leads)}
+`;
 
-DADOS DO DASHBOARD:
-- Total de Pacientes: ${summary.totalPacientes}
-- Confirmados: ${summary.confirmados}
-- Em Fase de Definição: ${summary.emAgendamento}
-- Desistências: ${summary.desistencias}
-- Distribuição de Exames: ${JSON.stringify(summary.examesTop)}
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
+      responseMimeType: "application/json"
+    }
+  });
+
+  return JSON.parse(response.text || "[]");
+};
+
+/**
+ * Gera análise do funil
+ */
+export const generateFunnelAnalysis = async (
+  funnelData: any,
+  refusalReasons: any[]
+) => {
+  const systemPrompt = await getSystemPrompt();
+
+  const userPrompt = `
+Analise o funil de agendamento da clínica ULTRAMED.
+Métricas: ${JSON.stringify(funnelData)}
+Motivos de recusa: ${JSON.stringify(refusalReasons)}
+`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt
+    }
+  });
+
+  return response.text;
+};
