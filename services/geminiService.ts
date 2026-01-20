@@ -1,40 +1,22 @@
-/**
- * ⚠️ USO EXCLUSIVO NO BACKEND (Node.js)
- * NÃO importar este arquivo no frontend (React / Vite)
- */
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { createClient } from "@supabase/supabase-js";
 import { UILead, LeadStage, Insight } from "../types";
+import { supabase } from "./supabaseClient";
 
-/* ============================================================================
-   VALIDAÇÃO DE AMBIENTE
-============================================================================ */
-if (typeof window !== "undefined") {
-  throw new Error(
-    "geminiService.ts não pode ser executado no browser. Use apenas no backend."
-  );
+/**
+ * Vite: variáveis de ambiente DEVEM começar com VITE_
+ * process.env NÃO existe no browser
+ */
+const apiKey = import.meta.env.VITE_GOOGLE_API_KEY as string;
+
+if (!apiKey) {
+  throw new Error("VITE_GOOGLE_API_KEY não configurada no ambiente");
 }
 
-if (!process.env.GEMINI_API_KEY) {
-  throw new Error("Variável de ambiente GEMINI_API_KEY não configurada.");
-}
+const ai = new GoogleGenAI({ apiKey });
 
-/* ============================================================================
-   CLIENTES
-============================================================================ */
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-/* ============================================================================
-   SYSTEM PROMPT
-============================================================================ */
+/**
+ * Busca o prompt de sistema configurado pelo usuário na aba AiCustomization.
+ */
 export const getSystemPrompt = async (): Promise<string> => {
   try {
     const { data, error } = await supabase
@@ -53,13 +35,10 @@ export const getSystemPrompt = async (): Promise<string> => {
   }
 };
 
-/* ============================================================================
-   INSIGHTS DE LEADS
-============================================================================ */
 export const generateLeadInsights = async (
   leads: UILead[]
 ): Promise<Insight[]> => {
-  if (!leads || leads.length === 0) return [];
+  if (!apiKey || leads.length === 0) return [];
 
   const systemPrompt = await getSystemPrompt();
 
@@ -70,4 +49,17 @@ export const generateLeadInsights = async (
     desistencias: leads.filter(l => l.isRefused).length,
     examesTop: leads.reduce((acc: Record<string, number>, l) => {
       const exam = l.interestExam || "Não Informado";
-      acc[exam] = (acc[exam] || 0)
+      acc[exam] = (acc[exam] || 0) + 1;
+      return acc;
+    }, {})
+  };
+
+  const userPrompt = `
+Analise os dados reais de atendimento e triagem abaixo para gerar insights estratégicos.
+
+DADOS DO DASHBOARD:
+- Total de Pacientes: ${summary.totalPacientes}
+- Confirmados: ${summary.confirmados}
+- Em Fase de Definição: ${summary.emAgendamento}
+- Desistências: ${summary.desistencias}
+- Distribuição de Exames: ${JSON.stringify(summary.examesTop)}
